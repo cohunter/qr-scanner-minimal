@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1">
+    <title>Scan QR Code</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/logo.png">
+    <script src="/lib/jsQR.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker
+            .register('/worker.js')
+            .then(() => { console.log('Service Worker Registered'); });
+        }
+        class QR {
+            constructor(binaryData, data) {
+                this.binaryData = binaryData;
+                this.data = data;
+
+                this.lastSeen = new Date();
+            };
+
+        }
+        QR.prototype.toString = function() {
+            return `${this.data}`;
+        }
+
+        let captureSettings = {
+                    video: {
+                        facingMode: "environment"
+                    },
+                    audio: false
+                };
+
+        const enumerateDevs = async () => navigator.mediaDevices.enumerateDevices().then( devices => {
+                videoInputDevices = devices.filter( device => device.kind === "videoinput" );
+                if ( videoInputDevices.length === 0 ) {
+                    alert('no cameras found');
+                }
+
+                let s = document.createElement('div');
+
+                videoInputDevices.forEach(device => {
+                    console.log(device);
+                    let opt = document.createElement('button');
+                    opt.textContent = device.label || "Unknown Camera";
+                    opt.value = device.deviceId;
+                    opt.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        alert(this.value);
+                    })
+                    s.append(opt);
+                });
+
+                document.forms.config.appendChild(s);
+            });
+
+        let seenCodes = new Set();
+        const startCapture = async () => {
+            try {
+                let stream = await navigator.mediaDevices.getUserMedia(captureSettings);
+                enumerateDevs();
+                let settings = stream.getVideoTracks()[0].getSettings();
+                console.log(settings.height, settings.width);
+                let c = document.createElement('canvas');
+                c.height = settings.height;
+                c.width = settings.width;
+                let ctx = c.getContext('2d');
+                let x = null;
+                const updateData = async () => {
+                    let delay = 0;
+
+                    if (v.readyState === v.HAVE_ENOUGH_DATA) {
+                        try {
+                            ctx.clearRect(0, 0, c.width, c.height);
+                            ctx.drawImage(v, 0, 0, c.width, c.height);
+                            let data = ctx.getImageData(0, 0, c.width, c.height).data;
+                            let code = jsQR(data, c.width, c.height, { inversionAttempts: "dontInvert"});
+                            if (code && code.data != "") {
+                                ctx.beginPath();
+                                ctx.shadowBlur = 5;
+                                ctx.shadowOffsetX = 1;
+                                ctx.shadowOffsetY = 1;
+                                ctx.moveTo(code.location.bottomLeftCorner.x, code.location.bottomLeftCorner.y);
+                                ctx.lineTo(code.location.bottomRightCorner.x, code.location.bottomRightCorner.y);
+                                ctx.lineTo(code.location.topRightCorner.x, code.location.topRightCorner.y);
+                                ctx.lineTo(code.location.topLeftCorner.x, code.location.topLeftCorner.y);
+                                ctx.lineTo(code.location.bottomLeftCorner.x, code.location.bottomLeftCorner.y);
+                                ctx.strokeStyle = 'yellow';
+                                ctx.lineWidth = 3;
+                                ctx.shadowColor = 'black';
+                                ctx.stroke();
+
+                                ctx.strokeStyle = 'black';
+                                ctx.shadowColor = 'white';
+                                ctx.font = '50px monospace'
+                                ctx.strokeText(code.data, code.location.topLeftCorner.x, code.location.topLeftCorner.y)
+
+                                delay = 250;
+
+                                console.log("Found QR code", code);
+                                
+                                if ( !seenCodes.has(code.data) ) {
+                                    seenCodes.add(code.data);
+                                    /*let bx = document.createElement('canvas');
+                                    bx.width = c.width
+                                    bx.height = c.height
+                                    let ctx2 = bx.getContext('2d');*/
+                                    
+                                    //document.body.appendChild(bx);
+                                    alert('Scanned: '+new QR(code.binaryData, code.data));
+                                    window.myCode = { code: code, data: data };
+
+                                    let historyContainer = document.querySelector("#history");
+                                    let link = document.createElement("a");
+                                    link.href = code.data;
+                                    link.text = code.data;
+                                    historyContainer.appendChild(link);
+                                    
+                                    // ctx2.putImageData(new ImageData(myCode.data, v.videoWidth, v.videoHeight), 0, 0)
+                                } else {
+                                    console.log('Duplicate: ', code);
+                                }
+                                //await navigator.share({url: code.data});
+                            }
+                        } catch (e) {
+                            //alert(e);
+                            console.warn(e);
+                        } finally {
+                            setTimeout(() => window.requestAnimationFrame(updateData), delay);
+                        }
+                    } else {
+                        window.requestAnimationFrame(updateData);
+                    }
+                    //setTimeout(() => window.requestAnimationFrame(updateData), delay);
+                    //alert('set');
+                }
+
+                let v = document.createElement('video');
+                v.autoplay = true;
+                v.playsInline = true;
+                v.srcObject = stream;
+                //await v.play();
+                //alert('playing');
+                v.addEventListener('loadeddata', async () => {
+                    x = updateData;
+                    //alert('loaded');
+                    window.requestAnimationFrame(updateData);
+                });
+
+                let container = document.querySelector('.qr-video-container')
+                container.append(v);
+                container.append(c);
+            } catch (e) {
+                alert(e);
+                console.warn(e);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            document.querySelector('#go').addEventListener('click', startCapture);
+
+            
+
+            await startCapture();
+        });
+    </script>
+    <style type="text/css">
+    /*
+    canvas {
+        opacity: 0.5;
+        z-index: 100;
+    }
+    canvas, video {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        object-fit: contain;
+    }*/
+    body {
+        display: flex;
+        margin: 0;
+    }
+    .qr-video-container {
+        position: relative;
+        flex-grow: 1;
+    }
+    canvas, video {
+        position: absolute;
+        top: 0;
+        left: 0;
+        object-fit: contain;
+        max-width: 100%;
+    }
+    @media(max-width: 768px) {
+        body {
+            flex-direction: column;
+        }
+    }
+    </style>
+</head>
+<body>
+    <div>
+        <nav>
+            <h1>QR Code Scanner</h1>
+            <form name="config">
+                <button id="go">Switch Camera</button>
+            </form>
+        </nav>
+        <div id="history">
+        </div>
+    </div>
+    <div class="qr-video-container"></div>
+</body>
+</html>
